@@ -137,6 +137,19 @@ class RLHFDataset(Dataset):
 
         chat = row_dict.pop(self.prompt_key)
 
+        # Task 4: Prompt Engineering for Reflection
+        # Check if we need to append the reflection instruction.
+        # This is a heuristic to ensure the model knows about the new requirements.
+        new_instruction = "Solve the math problem. Show your reasoning in <think> tags. Output the final answer in \\boxed{}. Finally, analyze your own solution in <reflection> tags, stating whether you believe it is 'correct' or 'wrong'."
+        
+        if chat and isinstance(chat, list):
+            # Find the last user message and append instruction if not present
+            for msg in reversed(chat):
+                if msg.get('role') == 'user':
+                    if "<reflection>" not in msg.get('content', ''):
+                        msg['content'] += "\n\n" + new_instruction
+                    break
+
         prompt_with_chat_template = self.tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
 
         input_ids, attention_mask = verl_F.tokenize_and_postprocess_data(prompt=prompt_with_chat_template,

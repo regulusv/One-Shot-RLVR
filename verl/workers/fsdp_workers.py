@@ -147,10 +147,11 @@ class ActorRolloutRefWorker(Worker):
                                enable_gradient_checkpointing=False,
                                trust_remote_code=False,
                                use_liger=False,
+                               load_in_4bit=False,
                                role='actor'):
         from verl.utils.model import print_model_size, update_model_config, get_generation_config
         from verl.utils.torch_dtypes import PrecisionType
-        from transformers import AutoModelForCausalLM, AutoConfig
+        from transformers import AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, MixedPrecision, CPUOffload
         from torch import optim
 
@@ -195,18 +196,59 @@ class ActorRolloutRefWorker(Worker):
         # NOTE(fix me): tie_word_embedding causes meta_tensor init to hang
         init_context = get_init_weight_context_manager(use_meta_tensor=not actor_model_config.tie_word_embeddings)
 
+        if load_in_4bit:
+            quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.float16)
+            device_map = "auto"
+            # 4-bit models need to be on GPU, and FSDP wrapping might need adjustment or awareness
+            # For Single GPU (FSDP size 1) + 4bit, device_map='auto' puts it on GPU 0.
+        else:
+            quantization_config = None
+            device_map = None
+
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             actor_module = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=local_path,
                                                                 torch_dtype=torch_dtype,
                                                                 config=actor_model_config,
                                                                 attn_implementation='flash_attention_2',
-                                                                trust_remote_code=trust_remote_code)
+                                                                trust_remote_code=trust_remote_code,
+                                                                quantization_config=quantization_config,
+                                                                device_map=device_map)
             # Apply Liger kernel to the model if use_liger is set to True
             if use_liger:
                 from liger_kernel.transformers.monkey_patch import _apply_liger_kernel_to_instance
                 _apply_liger_kernel_to_instance(model=actor_module)
 
+            # Add LoRA Support
+            if self.config.model.get('lora_rank', 0) > 0:
+                from peft import LoraConfig, TaskType, get_peft_model
+                
+                # We need to make sure we don't apply LoRA twice or incorrectly if it was already applied
+                # (Though usually peft handles this)
+                
+                lora_rank = self.config.model.get('lora_rank')
+                lora_alpha = self.config.model.get('lora_alpha', lora_rank)
+                target_modules = self.config.model.get('target_modules', 'all-linear')
+                
+                if target_modules == 'all-linear':
+                    # AutoModelForCausalLM might not expose this easily, but PEFT handles "all-linear" 
+                    # usually by inspecting the model. However, for 4-bit, we typically want explicit targets or let PEFT decide.
+                    # We will pass it as is if PEFT supports it, or standard list
+                    pass
+
+                lora_config = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM,
+                    r=lora_rank,
+                    lora_alpha=lora_alpha,
+                    target_modules=target_modules,
+                    bias="none",
+                )
+                actor_module.enable_input_require_grads()
+                actor_module = get_peft_model(actor_module, lora_config)
+                
+                if self.rank == 0:
+                    actor_module.print_trainable_parameters()
+            
             # some parameters may not in torch_dtype. TODO(zhangchi.usc1992) remove this after we switch to fsdp2
             actor_module.to(torch_dtype)
 
@@ -232,7 +274,8 @@ class ActorRolloutRefWorker(Worker):
 
         mixed_precision = MixedPrecision(param_dtype=param_dtype, reduce_dtype=reduce_dtype, buffer_dtype=buffer_dtype)
 
-        auto_wrap_policy = get_fsdp_wrap_policy(module=actor_module, config=fsdp_config.get('wrap_policy', None))
+        auto_wrap_policy = get_fsdp_wrap_policy(module=actor_module, config=fsdp_config.get('wrap_policy', None), is_lora=self.config.model.get('lora_rank', 0) > 0)
+
 
         if self._is_rollout and self.config.rollout.name == 'hf':
             # TODO(zhangchi.usc1992, shengguangming) fix me. Current, auto_wrap_policy causes HFRollout to hang in Gemma
@@ -359,6 +402,7 @@ class ActorRolloutRefWorker(Worker):
                 enable_gradient_checkpointing=self.config.model.get('enable_gradient_checkpointing', False),
                 trust_remote_code=self.config.model.get('trust_remote_code', False),
                 use_liger=self.config.model.get('use_liger', False),
+                load_in_4bit=self.config.model.get('load_in_4bit', False),
                 role='actor')
 
             # get the original unwrapped module
@@ -388,6 +432,7 @@ class ActorRolloutRefWorker(Worker):
                                                                trust_remote_code=self.config.model.get(
                                                                    'trust_remote_code', False),
                                                                use_liger=self.config.model.get('use_liger', False),
+                                                               load_in_4bit=self.config.model.get('load_in_4bit', False),
                                                                role='ref')[0]
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
