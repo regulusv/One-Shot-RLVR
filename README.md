@@ -24,9 +24,12 @@
 
 
 ## Setup
+**Important Note**: The environment setup here may be outdated. If you encounter issues that are difficult to resolve, you may want to check the updated installation of [verl](https://github.com/volcengine/verl). In general, if you can run RLVR with the full dataset normally, then you should be able to run one-shot RLVR by simply replacing the dataset with [ours](https://huggingface.co/datasets/ypwang61/One-Shot-RLVR-Datasets). For example, others have reproduced similar results in other RL frameworks such as [tunix](https://github.com/google/tunix/tree/main?tab=readme-ov-file).
 
 
 ### Train Enviroment
+
+
 Our training pipeline is adapted from [verl](https://github.com/volcengine/verl) and  [rllm(DeepScaleR)](https://github.com/agentica-project/rllm). The installation commands that we verified as viable are as follows:
 ```bash
 conda create -y -n rlvr_train python=3.10
