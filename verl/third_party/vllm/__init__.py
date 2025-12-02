@@ -25,6 +25,7 @@ def get_version(pkg):
 
 package_name = 'vllm'
 package_version = get_version(package_name)
+print(f"DEBUG: vllm package_version={repr(package_version)}")
 vllm_version = None
 
 if package_version == '0.3.1':

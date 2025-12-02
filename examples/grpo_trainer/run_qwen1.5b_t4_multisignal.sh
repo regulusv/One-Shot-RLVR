@@ -2,6 +2,7 @@ set -x
 
 export VLLM_ATTENTION_BACKEND=XFORMERS
 export RAY_memory_monitor_refresh_ms=0
+export WANDB_API_KEY=1c2ac175f8b9da0c87c01049fae505edefb2a884
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -31,7 +32,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
-    trainer.logger=['console'] \
+    trainer.logger=['console','wandb'] \
     trainer.project_name='verl_grpo_example_gsm8k' \
     trainer.experiment_name='qwen1.5b_t4_multisignal' \
     trainer.n_gpus_per_node=1 \

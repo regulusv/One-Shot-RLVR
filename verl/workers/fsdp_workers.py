@@ -676,9 +676,14 @@ class ActorRolloutRefWorker(Worker):
         # TODO: support DCP and save sharded checkpoints
         import torch.distributed
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType, FullStateDictConfig
-        cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-        with FSDP.state_dict_type(self.actor.actor_module, StateDictType.FULL_STATE_DICT, cfg):
+        
+        if isinstance(self.actor.actor_module, FSDP):
+            cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            with FSDP.state_dict_type(self.actor.actor_module, StateDictType.FULL_STATE_DICT, cfg):
+                state_dict = self.actor.actor_module.state_dict()
+        else:
             state_dict = self.actor.actor_module.state_dict()
+            
         if self.rank == 0:
             print(f'Saving actor checkpoint to {local_path}')
             os.makedirs(local_path, exist_ok=True)
