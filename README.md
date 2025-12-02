@@ -1,175 +1,151 @@
-<div align="center">
+# One-Shot-RLVR: Multi-Signal Reinforcement Learning
 
-# Reinforcement Learning for Reasoning in Large Language Models with One Training Example
+This repository extends the original One-Shot-RLVR codebase with support for single-GPU training and multi-signal reward functions for mathematical reasoning.
 
+## Overview
 
-[Yiping Wang](https://ypwang61.github.io/), [Qing Yang](https://www.linkedin.com/in/qing-yang-b3a02120b/), [Zhiyuan Zeng](https://zhiyuan-zeng.github.io/), [Liliang Ren](https://renll.github.io/), [Lucas Liu](https://liyuanlucasliu.github.io/), [Baolin Peng](https://www.microsoft.com/en-us/research/people/baolinpeng/), [Hao Cheng](https://www.microsoft.com/en-us/research/people/chehao/), [Xuehai He](https://sheehan1230.github.io/), [Kuan Wang](https://github.com/kuan-wang), [Jianfeng Gao](https://www.microsoft.com/en-us/research/people/jfgao/), [Weizhu Chen](https://www.microsoft.com/en-us/research/people/wzchen/), [Shuohang Wang*](https://www.microsoft.com/en-us/research/people/shuowa/), [Simon Shaolei Du*](https://simonshaoleidu.com/), [Yelong Shen*](https://www.linkedin.com/in/yelong-shen-84b0122b/)
+**Goal**: Train `Qwen2.5-Math-1.5B` (or smaller models) using **GRPO** (Group Relative Policy Optimization) with a **multi-signal reward function** on a single GPU.
 
-<br>
+**Key Features**:
+- Multi-signal reward combining verification, format, and reflection signals
+- Single GPU training support (tested on NVIDIA L4 24GB)
+- Optimized configurations for different validation/training scenarios
+- GCP cloud training infrastructure
 
-[![paper](https://img.shields.io/badge/paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2504.20571)
-[![Models/Dataset](https://img.shields.io/badge/Models/Dataset-fcd022?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/collections/ypwang61/one-shot-rlvr-6827f72c3359b2ffe75fc1a8)
-[![Code](https://img.shields.io/badge/Code-000000?style=for-the-badge&logo=github&logoColor=000&logoColor=white)](https://github.com/ypwang61/One-Shot-RLVR)
-[![📁_W&B_LOGS](https://img.shields.io/badge/📁_W&B_LOGS-fcd022?style=for-the-badge&logo=wandb&logoColor=000)](https://wandb.ai/yipingwanguw/verl_few_shot?nw=nwuseryipingwang22)
-[![X_Summary](https://img.shields.io/badge/X_Summary-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/ypwang61/status/1917596101953348000)
+## Quick Start
 
+### Training on GCP
 
-</div>
+1. **SSH to GCP instance**:
+   ```bash
+   gcloud compute ssh instance-20251202-055916 \
+       --project=one-shot-rlvr-cs229 \
+       --zone=northamerica-northeast1-b
+   ```
 
-## Updates
-* 18/09/2025: 🎉🎉 One-Shot-RLVR is accepted by NeurIPS 2025!
-* 18/06/2025: We update the evaluation results on DeepSeek-R1-Distill-Qwen-1.5B (see details below) on different context length ([8k](https://github.com/ypwang61/One-Shot-RLVR?tab=readme-ov-file#evaluation-length--8192), [32k](https://github.com/ypwang61/One-Shot-RLVR?tab=readme-ov-file#evaluation-length--32768)) and show consistent improvement from few-shot RLVR. **Note: A summary replying the confusion regarding the evaluation of our DeepSeek-R1-Distill-Qwen-1.5B is available [here](https://github.com/ypwang61/One-Shot-RLVR/issues/22#issuecomment-3076462285)**. Also see our results with 32k length below.
-* 17/05/2025: We release our [checkpoints](https://huggingface.co/collections/ypwang61/one-shot-rlvr-6827f72c3359b2ffe75fc1a8) and [dataset](https://huggingface.co/datasets/ypwang61/one_shot_rlvr) in huggingface.
-* 30/04/2025: 🎉 We release our [paper](https://arxiv.org/abs/2504.20571), [code](https://github.com/ypwang61/One-Shot-RLVR), and [wandb records](https://wandb.ai/yipingwanguw/verl_few_shot?nw=nwuseryipingwang22). See the summarization of our work at [X(twitter)](https://x.com/ypwang61/status/1917596101953348000).
+2. **Start training**:
+   ```bash
+   # Ultra-quick validation (2-3 minutes)
+   bash ~/One-Shot-RLVR/scripts/remote_start_training.sh ultra-quick
+   
+   # Quick validation (22 minutes)
+   bash ~/One-Shot-RLVR/scripts/remote_start_training.sh quick
+   
+   # Full training (17 hours)
+   bash ~/One-Shot-RLVR/scripts/remote_start_training.sh full
+   ```
 
+See `scripts/README.md` for detailed usage.
 
-## Setup
-**Important Note**: The environment setup here may be outdated. If you encounter issues that are difficult to resolve, you may want to check the updated installation of [verl](https://github.com/volcengine/verl). In general, if you can run RLVR with the full dataset normally, then you should be able to run one-shot RLVR by simply replacing the dataset with [ours](https://huggingface.co/datasets/ypwang61/One-Shot-RLVR-Datasets). For example, others have reproduced similar results in other RL frameworks such as [tunix](https://github.com/google/tunix/tree/main?tab=readme-ov-file).
+## Key Modifications
 
+### 1. Multi-Signal Reward Function
+- **File**: `verl/utils/reward_score/multi_signal_math.py`
+- **Purpose**: Composite reward combining:
+  - **Verification** ($r_{verify}$): Correctness of mathematical answer
+  - **Format** ($r_{format}$): Presence of required XML tags
+  - **Reflection** ($r_{reflect}$): Quality of self-reflection
+- **Formula**: $r = \alpha \cdot r_{verify} + \beta \cdot r_{format} + \gamma \cdot r_{reflect}$
+- **Integration**: Modified `verl/trainer/main_ppo.py` to support `multi_signal` reward manager
 
-### Train Enviroment
+### 2. Single GPU Training Support
+- **Model**: Qwen2.5-0.5B (494M parameters)
+- **Script**: `examples/grpo_trainer/run_qwen0.5b_l4_vllm.sh`
+- **Configuration**: Optimized for L4 GPU (24GB) with vLLM rollout
+- **Memory**: ~16GB usage with full precision (bfloat16)
+- **Why 0.5B?**: 1.5B model requires ~22GB, exceeding L4 capacity
 
+### 3. Training Modes
 
-Our training pipeline is adapted from [verl](https://github.com/volcengine/verl) and  [rllm(DeepScaleR)](https://github.com/agentica-project/rllm). The installation commands that we verified as viable are as follows:
-```bash
-conda create -y -n rlvr_train python=3.10
-conda activate rlvr_train
-pip install -e .
-pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121
-pip install ray vllm==0.6.3
-pip install flash-attn --no-build-isolation
-pip install wandb matplotlib
-pip install huggingface_hub
+| Mode | Steps | Time | Dataset | Purpose |
+|------|-------|------|---------|---------|
+| **ultra-quick** | 1 | 2-3 min | 512 | Workflow validation |
+| **quick** | ~15 | 22 min | 7,424 | Effect validation |
+| **dry-run** | 58 | 70 min | 7,424 | Full validation |
+| **full** | 870 | 17h | 7,424 | Final training |
+
+### 4. GCP Infrastructure
+- **Scripts**: `scripts/remote_start_training.sh`, `scripts/create_quick_dataset.sh`
+- **Setup**: `scripts/setup_gpu.sh`, `scripts/setup_l4_gpu.sh`
+- **Monitoring**: `scripts/monitor_training.sh`
+
+## Technical Notes
+
+### vLLM Compatibility
+- **vLLM does NOT support 4-bit quantization** - requires full precision (fp16/bf16)
+- Attempts to use 4-bit + vLLM result in weight synchronization failures
+- **Solution**: Use full precision with smaller models (0.5B) or more GPUs
+
+### Memory Constraints
+- **L4 GPU (24GB)**: Can train 0.5B models, not 1.5B
+- **1.5B model**: Requires 2× L4 or 1× A100 (40GB+)
+- **0.5B model**: Fits comfortably (~16GB usage)
+
+### Training Configuration
+- **Rollout**: vLLM (faster than HF rollout)
+- **Precision**: bfloat16 (full precision)
+- **Batch size**: 128 (normal), 512 (quick validation)
+- **Steps per epoch**: 58 (with batch_size=128)
+
+## Project Structure
+
 ```
-If you are using H100 nodes and see errors like `CUDA error: device kernel image is invalid`, please refer to [this issue](https://github.com/ypwang61/One-Shot-RLVR/issues/22#issuecomment-3066442183) for fixing the problem.
-
-### Eval Enviroment
-Our evaluation pipeline for math reasoning tasks is adapted from [Qwen2.5-Math](https://github.com/QwenLM/Qwen2.5-Math). The installation commands that we verified as viable are as follows:
-```bash
-conda create -y -n rlvr_eval python=3.10
-conda activate rlvr_eval
-cd Qwen2.5-Eval/evaluation
-cd latex2sympy
-pip install -e .
-cd ..
-pip install -r requirements.txt 
-pip install vllm==0.5.1 --no-build-isolation
-pip install transformers==4.42.3
-pip install wandb matplotlib
-pip install -U transformers
-pip install vllm==0.6.3
+One-Shot-RLVR/
+├── verl/
+│   ├── utils/
+│   │   └── reward_score/
+│   │       └── multi_signal_math.py    # Multi-signal reward
+│   ├── trainer/
+│   │   └── main_ppo.py                 # Modified for multi_signal
+│   └── workers/
+│       └── fsdp_workers.py              # 4-bit + LoRA support
+├── examples/
+│   └── grpo_trainer/
+│       ├── run_qwen0.5b_l4_vllm.sh      # Main training script
+│       ├── run_qwen0.5b_l4_vllm_quick.sh # Quick validation
+│       └── run_qwen0.5b_l4_vllm_ultra_quick.sh # Ultra-quick
+├── scripts/
+│   ├── remote_start_training.sh         # Unified startup script
+│   ├── create_quick_dataset.sh         # Create small dataset
+│   └── monitor_training.sh             # Monitor progress
+└── docs/
+    └── TRAINING_CONCEPTS.md             # Training concepts explained
 ```
 
+## Documentation
 
-## Data
-### DSR-sub
-We randomly select a subset consisting of 1209 examples from [DeepScaleR-Preview-Dataset](https://huggingface.co/datasets/agentica-org/DeepScaleR-Preview-Dataset) (DSR-sub), and we use it as the instance pool for data selection. We include the training example used in our paper in `data/train/one_shot_rlvr`. For 1(few)-shot RLVR dataset, we duplicate the data until training batch size (in our experiment it is 128). 
+- **Training Scripts**: `scripts/README.md`
+- **Training Concepts**: `docs/TRAINING_CONCEPTS.md`
+- **GCP Setup**: `GCP_SETUP_GUIDE.md`
+- **Project Instructions**: `PROJECT_INSTRUCTIONS.md`
 
+## Environment Variables
 
+- `REWARD_WEIGHTS`: Comma-separated weights for multi-signal reward (default: "1.0,0.5,0.5")
+- `WANDB_API_KEY`: Weights & Biases API key for logging
+- `VLLM_ATTENTION_BACKEND`: Set to `FLASH_ATTN` for L4 GPUs
 
-(Optionally) To obtain the training example, we rank DSR-sub by the historical variance score, which calculates the variance of the historical accuracy (We hope this can inspire better data selection way in the future). To obtain examples $\pi_i$ based on the historical accuracy of Qwen2.5-Math-1.5B, we can change the `top_index` parameter in `data/data_selection.sh` to $i-1$, and run then run `bash data_selection.sh`.
+## Monitoring
 
+### Wandb
+- **URL**: https://wandb.ai
+- **Project**: `verl_grpo_example_gsm8k`
 
-As a reference, we present example $\pi_1$ here: 
-<!-- and $\pi_{13}$ as follows. -->
+### Logs
+- Ultra-quick: `~/ultra_quick_log.txt`
+- Other modes: `~/qwen0.5b_log.txt`
 
-#### $\pi_1$:
-```text
-Prompt:
-"The pressure \\( P \\) exerted by wind on a sail varies jointly as the area \\( A \\) of the sail and the cube of the wind's velocity \\( V \\). When the velocity is \\( 8 \\) miles per hour, the pressure on a sail of \\( 2 \\) square feet is \\( 4 \\) pounds. Find the wind velocity when the pressure on \\( 4 \\) square feet of sail is \\( 32 \\) pounds. Let's think step by step and output the final answer within \\boxed{}."
+## Known Issues & Solutions
 
-Ground truth (label in DSR-sub):
-12.8.
-```
+### Issue: OOM with 1.5B model
+**Solution**: Use 0.5B model or upgrade to larger GPU
 
-<!-- #### $\pi_{13}$:
-```text
-Prompt:
-"Given that circle $C$ passes through points $P(0,-4)$, $Q(2,0)$, and $R(3,-1)$.  \n$(1)$ Find the equation of circle $C$.  \n$(2)$ If the line $l: mx+y-1=0$ intersects circle $C$ at points $A$ and $B$, and $|AB|=4$, find the value of $m$. Let's think step by step and output the final answer within \\boxed{}."
+### Issue: vLLM + 4-bit incompatibility
+**Solution**: Use full precision (bfloat16) with vLLM
 
-Ground truth (label in DSR-sub):
-\frac{4}{3}.
-``` -->
+### Issue: Slow training
+**Solution**: Use `quick` or `ultra-quick` modes for validation
 
+## License
 
-## Training
-Before training, we can assign the checkpoint path:
-```bash
-export CHECKPOINTS_DIR=./checkpoints # your checkpoint path
-export WANDB_API_KEY=... # your wandb api key
-```
-
-To run 1-shot RLVR with $\pi_1$, we can run:
-```bash
-conda activate rlvr_train
-bash scripts/train/training_1.5b_pi1_r128.sh
-```
-
-As a comparison, the commands for running full-set RLVR on DSR-sub is as below:
-```bash
-conda activate rlvr_train
-bash scripts/train/training_1.5b_dsr_sub.sh 
-```
-
-Please change `data.train_files` and `trainer.experiment_name` in the training script when trying other training examples.
-
-## Evaluation
-
-### Eval Scripts for Qwen Models
-To run evaluation for 1-shot RLVR with $\pi_1$ on 6 common math reasoning benchmarks (MATH500, AIME24, AMC23, Minerva Math, OlympiadBench, AIME25), we can follow the commands:
-```bash
-conda activate rlvr_eval
-cd Qwen2.5-Eval/evaluation
-bash sh/eval_one_experiment_all_ckpts.sh
-```
-Here for AIME24, AMC23, and AIME25, we evaluate the pass@8 results.
-Please adjust the experiment name in `Qwen2.5-Eval/evaluation/sh/eval_one_experiment_all_ckpts.sh` when using other training examples. 
-
-
-### Evaluation for DeepSeek-R1-Distill-Qwen-1.5B
-
-For DeepSeek-R1-Distill-Qwen-1.5B, we can also evaluate based on [rllm(DeepScaleR)](https://github.com/agentica-project/rllm) official repo. As DeepSeek-R1 and DeepScaleR, we use `temperature=0.6` and `top_p=0.95` for evaluation, and use `avg@16` for MATH500, Minerva MAth & OlympiadBench, ang `avg@64` for AIME24, AIME25 and AMC23. Since our training length is 8192, we provide the evaluations results for both 8k and 32k evaluation length. The results can be reproduced by provided [checkpoints](https://huggingface.co/collections/ypwang61/one-shot-rlvr-6827f72c3359b2ffe75fc1a8). 
-
-#### Evaluation length = 8192
-| Model                                       | Training Length   | Evaluation Length | MATH 500 (avg@16) | AIME 2024 (avg@64) | AMC 2023 (avg@64) | Minerva Math (avg@16) | Olympiad Bench (avg@16) | AIME 2025 (avg@64) | Avg   |
-|---------------------------------------------|-------------------|-------------------|-------------------|--------------------|-------------------|-----------------------|-------------------------|--------------------|-------|
-| R1-Distill-1.5B                             | –                 | 8k                | 76.7              | 20.8               | 51.3              | 23.3                  | 35.4                    | 19.7               | 37.9  |
-| **1-shot** RLVR on R1-Distill-1.5B              | 8k                | 8k                | 80.5              | 25.1               | 58.9              | 27.2                  | 40.2                    | 21.7               | 42.3  |
-| **4-shot** RLVR on R1-Distill-1.5B              | 8k                | 8k                | 81.2              | 25.8               | 60.1              | 26.8                  | 40.4                    | 22.0               | 42.7  |
-| **16-shot** RLVR on R1-Distill-1.5B             | 8k                | 8k                | 83.3              | 29.6               | 64.8              | 29.3                  | 43.3                    | 22.8               | 45.5  |
-| 1.2k-shot (DSR-sub) RLVR on R1-Distill-1.5B | 8k                | 8k                | 84.4              | 30.2               | 68.3              | 29.2                  | 45.8                    | 26.7               | 47.4  |
-| DeepScaleR-1.5B-Preview (40k DSR data)      | 8k→16k→24k        | 8k                | 86.3              | 35.2               | 68.1              | 29.6                  | 46.7                    | 28.3               | 49.0  |
-
-
-#### Evaluation length = 32768
-
-| Model                                       | Training Length   | Evaluation Length | MATH 500 (avg@16) | AIME 2024 (avg@64) | AMC 2023 (avg@64) | Minerva Math (avg@16) | Olympiad Bench (avg@16) | AIME 2025 (avg@64) | Avg   |
-|---------------------------------------------|-------------------|-------------------|-------------------|--------------------|-------------------|-----------------------|-------------------------|--------------------|-------|
-| R1-Distill-1.5B                             | –                 | 32k               | 82.9              | 29.8               | 63.2              | 26.4                  | 43.1                    | 23.9               | 44.9  |
-| R1-Distill-1.5B (reported)                  | –                 | 32k               | 83.9              | 28.9               | –                 | –                     | –                       | –                  | –     |
-| **1-shot** RLVR on R1-Distill-1.5B              | 8k                | 32k               | 83.9              | 31.0               | 66.1              | 28.3                  | 44.6                    | 24.1               | 46.3  |
-| **4-shot** RLVR on R1-Distill-1.5B              | 8k                | 32k               | 84.8              | 32.2               | 66.6              | 27.7                  | 45.5                    | 24.8               | 46.9  |
-| **16-shot** RLVR on R1-Distill-1.5B             | 8k                | 32k               | 84.5              | 34.3               | 69.0              | 30.0                  | 46.9                    | 25.2               | 48.3  |
-| 1.2k-shot (DSR-sub) RLVR on R1-Distill-1.5B | 8k                | 32k               | 84.5              | 32.7               | 70.1              | 29.5                  | 46.9                    | 27.8               | 48.6  |
-| DeepScaleR-1.5B-Preview (40k DSR data)      | 8k→16k→24k        | 32k               | 87.6              | 41.4               | 73.2              | 30.6                  | 49.6                    | 31.3               | 52.3  |
-| DeepScaleR-1.5B-Preview (reported)          | 8k→16k→24k        | 32k               | 87.8              | 43.1 (avg@16)      | 73.6 (avg@16)     | 30.2 (avg@16)         | 50.0 (avg@16)           | –                  | –     |
-
-
-## W&B
-We have logged our experiments for three models to [this wandb project](https://wandb.ai/yipingwanguw/verl_few_shot?nw=nwuseryipingwang22), including the results of 1(few)-shot RLVR on [`Qwen2.5-Math-1.5B`](https://huggingface.co/Qwen/Qwen2.5-Math-1.5B), [`Qwen2.5-Math-7B`](https://huggingface.co/Qwen/Qwen2.5-Math-7B) and [`DeepSeek-R1-Distill-Qwen-1.5B`](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B). We also include the baseline of the full-set RLVR with DSR-sub in it. Please note that the validation results displayed are calculated using the verl/rllm framework and may differ slightly from qwen-eval results.
-
-## Acknowledgements
-- Our training experiments are powered by a modified fork of [rllm(DeepScaleR)](https://github.com/agentica-project/rllm) and [verl](https://github.com/volcengine/verl).
-- Our evaluation experiments are based on a modified fork of [Qwen2.5-Math](https://github.com/QwenLM/Qwen2.5-Math).
-- Our model is trained on top of [`Qwen2.5-Math-1.5B`](https://huggingface.co/Qwen/Qwen2.5-Math-1.5B), [`Qwen2.5-Math-7B`](https://huggingface.co/Qwen/Qwen2.5-Math-7B), [`Llama-3.2-3B-Instruct`](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) and [`DeepSeek-R1-Distill-Qwen-1.5B`](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B).
-
-  
-## Citation
-```bibtex
-@article{wang2025reinforcement,
-  title={Reinforcement Learning for Reasoning in Large Language Models with One Training Example},
-  author={Wang, Yiping and Yang, Qing and Zeng, Zhiyuan and Ren, Liliang and Liu, Lucas and Peng, Baolin and Cheng, Hao and He, Xuehai and Wang, Kuan and Gao, Jianfeng and Chen, Weizhu and Wang, Shuohang and Du, Simon Shaolei and Shen, Yelong},
-  journal={arXiv preprint arXiv:2504.20571},
-  year={2025}
-}
-```
+See `LICENSE` file for details.

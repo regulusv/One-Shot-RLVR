@@ -86,6 +86,11 @@ def create_huggingface_actor(model_name: str, override_config_kwargs=None, autom
         override_config_kwargs = {}
     if automodel_kwargs is None:
         automodel_kwargs = {}
+    
+    # Force BF16 and Flash Attention 2 for L4
+    automodel_kwargs['torch_dtype'] = torch.bfloat16
+    automodel_kwargs['attn_implementation'] = 'flash_attention_2'
+
     assert isinstance(override_config_kwargs, Dict), \
         f'override_config_kwargs must be a dict, got {type(override_config_kwargs)}'
     module_config = get_huggingface_actor_config(model_name,

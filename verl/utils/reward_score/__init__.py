@@ -33,6 +33,9 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
     elif data_source in ['deepscaler', 'aime', 'amc', 'math', 'minerva', 'olympiad']:
         from . import deepscaler
         res = deepscaler.compute_score("", solution_str, ground_truth, extra_info, use_think=True)
+    elif data_source == 'one_shot_rlvr':
+        from . import multi_signal_math
+        res = multi_signal_math.compute_score(data_source, solution_str, ground_truth, extra_info)
     else:
         raise NotImplementedError
 

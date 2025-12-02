@@ -1,57 +1,52 @@
 set -x
 
-# L4 GPU (24GB VRAM) - 4-bit + LoRA Training
-# L4 supports bf16 and Flash Attention 2
-# Using 4-bit quantization + LoRA for memory efficiency
+# L4 GPU - Qwen2.5-0.5B Fast Training
+# Target: 3-4 hours completion
+# Strategy: 50% data (3712 samples) + 5 epochs + optimized batch/rollout
 
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export RAY_memory_monitor_refresh_ms=0
 export WANDB_API_KEY=1c2ac175f8b9da0c87c01049fae505edefb2a884
 
-# Kill any existing Ray processes
 ray stop --force 2>/dev/null || true
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files=$HOME/data/gsm8k/train.parquet \
-    data.val_files=$HOME/data/gsm8k/test.parquet \
+    data.train_files=$HOME/data/gsm8k/train_medium.parquet \
+    data.val_files=$HOME/data/gsm8k/test_medium.parquet \
     data.train_batch_size=256 \
     data.val_batch_size=256 \
-    data.max_prompt_length=512 \
-    data.max_response_length=512 \
-    actor_rollout_ref.model.path=Qwen/Qwen2.5-Math-1.5B \
+    data.max_prompt_length=256 \
+    data.max_response_length=256 \
+    actor_rollout_ref.model.path=Qwen/Qwen2.5-0.5B \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
-    actor_rollout_ref.rollout.n=4 \
-    +actor_rollout_ref.rollout.n_val=4 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.rollout.n=2 \
+    +actor_rollout_ref.rollout.n_val=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_grpo_example_gsm8k' \
-    trainer.experiment_name='qwen1.5b_l4_4bit_lora' \
+    trainer.experiment_name='qwen0.5b_l4_vllm_fast' \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
-    trainer.test_freq=10 \
-    trainer.total_epochs=15 \
-    +actor_rollout_ref.model.load_in_4bit=True \
-    +actor_rollout_ref.model.lora_rank=64 \
-    +actor_rollout_ref.model.lora_alpha=128 \
-    +actor_rollout_ref.model.target_modules=all-linear \
+    trainer.test_freq=5 \
+    trainer.total_epochs=5 \
     ++reward_model.reward_manager=multi_signal \
     $@
 
