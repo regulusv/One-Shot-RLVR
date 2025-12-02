@@ -35,26 +35,29 @@ logger.setLevel(os.getenv('VERL_PPO_LOGGING_LEVEL', 'WARN'))
 class FSDPVLLMShardingManager(BaseShardingManager):
 
     def __init__(self,
-                 module: FSDP,
+                 module,
                  inference_engine: LLM,
                  model_config,
                  full_params: bool = False,
-                 device_mesh: DeviceMesh = None):
+                 device_mesh: DeviceMesh = None,
+                 skip_weight_sync: bool = False):
         self.module = module
         self.inference_engine = inference_engine
         self.model_config = model_config
         self.device_mesh = device_mesh
+        self.skip_weight_sync = skip_weight_sync  # For 4-bit quantized models
 
-        # Full params
+        # Full params - only set if module is FSDP
         self.full_params = full_params
-        if full_params:
-            FSDP.set_state_dict_type(self.module,
-                                     state_dict_type=StateDictType.FULL_STATE_DICT,
-                                     state_dict_config=FullStateDictConfig())
-        else:
-            FSDP.set_state_dict_type(self.module,
-                                     state_dict_type=StateDictType.SHARDED_STATE_DICT,
-                                     state_dict_config=ShardedStateDictConfig())
+        if isinstance(module, FSDP):
+            if full_params:
+                FSDP.set_state_dict_type(self.module,
+                                         state_dict_type=StateDictType.FULL_STATE_DICT,
+                                         state_dict_config=FullStateDictConfig())
+            else:
+                FSDP.set_state_dict_type(self.module,
+                                         state_dict_type=StateDictType.SHARDED_STATE_DICT,
+                                         state_dict_config=ShardedStateDictConfig())
 
         # Note that torch_random_states may be different on each dp rank
         self.torch_random_states = torch.cuda.get_rng_state()
@@ -68,8 +71,49 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             self.gen_random_states = None
 
     def __enter__(self):
+        # Skip weight sync for 4-bit quantized models (weights are incompatible with vLLM)
+        if self.skip_weight_sync:
+            log_gpu_memory_usage('Skipping weight sync for 4-bit model', logger=logger)
+            # For 4-bit models, vLLM loads its own weights, but they were offloaded to CPU
+            # We need to move them back to GPU
+            if vllm_version in ('0.4.2', '0.5.4', '0.6.3'):
+                # Manually move weights back to GPU
+                model = self.inference_engine.llm_engine.model_executor.worker.model_runner.model
+                device = torch.device('cuda:0')
+                for name, param in model.named_parameters():
+                    if param.device.type == 'cpu':
+                        param.data = param.data.to(device)
+                log_gpu_memory_usage('After moving vLLM weights to GPU', logger=logger)
+            else:
+                self.inference_engine.wake_up()
+            # Still need to set random states
+            if self.device_mesh is not None:
+                self.torch_random_states = torch.cuda.get_rng_state()
+                torch.cuda.set_rng_state(self.gen_random_states)
+            return
+        
         log_gpu_memory_usage('Before state_dict() in sharding manager memory', logger=logger)
         params = self.module.state_dict()
+        
+        # Handle PEFT/LoRA models: transform keys so vLLM can load the weights correctly
+        # PEFT models have keys like:
+        # - 'base_model.model.layers.0.self_attn.q_proj.base_layer.weight' (for base weights)
+        # - 'base_model.model.layers.0.self_attn.q_proj.lora_A.default.weight' (for LoRA weights)
+        # vLLM expects keys like:
+        # - 'model.layers.0.self_attn.q_proj.weight'
+        if any(k.startswith('base_model.model.') for k in params.keys()):
+            new_params = {}
+            for k, v in params.items():
+                # Skip LoRA-specific parameters (lora_A, lora_B)
+                if '.lora_A.' in k or '.lora_B.' in k:
+                    continue
+                # Strip 'base_model.model.' prefix
+                new_key = k.replace('base_model.model.', '')
+                # Handle 'base_layer' in the key (from PEFT's merged layers)
+                new_key = new_key.replace('.base_layer.', '.')
+                new_params[new_key] = v
+            params = new_params
+        
         log_gpu_memory_usage('After state_dict() in sharding manager memory', logger=logger)
         # Copy, not share memory
         load_format = 'hf' if self.full_params else 'dtensor'

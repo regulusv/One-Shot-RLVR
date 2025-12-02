@@ -205,12 +205,16 @@ class ActorRolloutRefWorker(Worker):
             quantization_config = None
             device_map = None
 
+        # Attention implementation: flash_attention_2 for Ampere+ (A100, L4, etc), sdpa for older GPUs (T4)
+        # Can be overridden via config
+        attn_impl = self.config.model.get('attn_implementation', 'flash_attention_2')
+
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             actor_module = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=local_path,
                                                                 torch_dtype=torch_dtype,
                                                                 config=actor_model_config,
-                                                                attn_implementation='flash_attention_2',
+                                                                attn_implementation=attn_impl,
                                                                 trust_remote_code=trust_remote_code,
                                                                 quantization_config=quantization_config,
                                                                 device_map=device_map)
@@ -264,7 +268,24 @@ class ActorRolloutRefWorker(Worker):
 
         # Skip FSDP wrapping for 4-bit models on single GPU
         if load_in_4bit and torch.distributed.get_world_size() == 1:
-             return actor_module, None, None, actor_model_config
+            # Still need optimizer for LoRA parameters
+            if role == 'actor' and optim_config is not None:
+                from verl.utils.torch_functional import get_constant_schedule_with_warmup
+                # Filter for trainable parameters (LoRA params)
+                trainable_params = [p for p in actor_module.parameters() if p.requires_grad]
+                actor_optimizer = optim.AdamW(trainable_params,
+                                              lr=optim_config.lr,
+                                              betas=optim_config.get('betas', (0.9, 0.999)),
+                                              weight_decay=optim_config.get('weight_decay', 1e-2))
+                total_steps = optim_config.get('total_training_steps', 0)
+                num_warmup_steps_ratio = optim_config.get('lr_warmup_steps_ratio', 0.)
+                num_warmup_steps = int(num_warmup_steps_ratio * total_steps)
+                actor_lr_scheduler = get_constant_schedule_with_warmup(optimizer=actor_optimizer,
+                                                                       num_warmup_steps=num_warmup_steps)
+            else:
+                actor_optimizer = None
+                actor_lr_scheduler = None
+            return actor_module, actor_optimizer, actor_lr_scheduler, actor_model_config
 
         # We wrap FSDP for rollout as well
         mixed_precision_config = fsdp_config.get('mixed_precision', None)
@@ -368,13 +389,21 @@ class ActorRolloutRefWorker(Worker):
             else:
                 raise NotImplementedError("vllm_mode must be 'customized' or 'spmd'")
             log_gpu_memory_usage('After building vllm rollout', logger=None)
-            if torch.distributed.get_world_size() == 1:
+            
+            # Skip weight sync for 4-bit quantized models (weights are incompatible with vLLM)
+            skip_weight_sync = self.config.model.get('load_in_4bit', False)
+            
+            # For 4-bit models, vLLM should load its own weights (not dummy weights)
+            # For normal models with world_size==1, use dummy weights and sync later
+            if torch.distributed.get_world_size() == 1 and not skip_weight_sync:
                 self.config.rollout.load_format = 'dummy_hf'
+            
             rollout_sharding_manager = FSDPVLLMShardingManager(module=self.actor_module_fsdp,
                                                                inference_engine=rollout.inference_engine,
                                                                model_config=self.actor_model_config,
                                                                full_params='hf' in self.config.rollout.load_format,
-                                                               device_mesh=rollout_device_mesh)
+                                                               device_mesh=rollout_device_mesh,
+                                                               skip_weight_sync=skip_weight_sync)
             log_gpu_memory_usage('After building sharding manager', logger=None)
 
         return rollout, rollout_sharding_manager
@@ -416,7 +445,7 @@ class ActorRolloutRefWorker(Worker):
             else:
                 self.actor_module = self.actor_module_fsdp._fsdp_wrapped_module
 
-            if self._is_offload_optimizer:
+            if self._is_offload_optimizer and self.actor_optimizer is not None:
                 offload_fsdp_optimizer(optimizer=self.actor_optimizer)
                 log_gpu_memory_usage('After offload actor optimizer during init', logger=logger)
         # load from checkpoint
@@ -496,7 +525,7 @@ class ActorRolloutRefWorker(Worker):
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
-        if self._is_offload_optimizer:
+        if self._is_offload_optimizer and self.actor_optimizer is not None:
             offload_fsdp_optimizer(optimizer=self.actor_optimizer)
         torch.cuda.empty_cache()
         return output
@@ -579,7 +608,7 @@ class ActorRolloutRefWorker(Worker):
             # after parameters sync with rollout, offload actor model to CPU
             if self._is_offload_param:
                 offload_fsdp_model_to_cpu(self.actor_module_fsdp)
-            if self._is_offload_optimizer:
+            if self._is_offload_optimizer and self.actor_optimizer is not None:
                 offload_fsdp_optimizer(optimizer=self.actor_optimizer)
 
             log_gpu_memory_usage('After entering rollout sharding manager', logger=logger)

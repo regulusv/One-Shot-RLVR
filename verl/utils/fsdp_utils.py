@@ -108,8 +108,10 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
 
 
 @torch.no_grad()
-def offload_fsdp_model_to_cpu(model: FSDP, empty_cache: bool = True):
-    assert isinstance(model, FSDP)
+def offload_fsdp_model_to_cpu(model, empty_cache: bool = True):
+    # Skip if model is not FSDP (e.g., 4-bit quantized model)
+    if not isinstance(model, FSDP):
+        return
     # lazy init FSDP model
     _lazy_init(model, model)
     assert model._is_root, f"Only support root model offloading to CPU"
@@ -129,8 +131,10 @@ def offload_fsdp_model_to_cpu(model: FSDP, empty_cache: bool = True):
 
 
 @torch.no_grad()
-def load_fsdp_model_to_gpu(model: FSDP):
-    assert isinstance(model, FSDP)
+def load_fsdp_model_to_gpu(model):
+    # Skip if model is not FSDP (e.g., 4-bit quantized model)
+    if not isinstance(model, FSDP):
+        return
     # lazy init FSDP model
     _lazy_init(model, model)
     assert model._is_root, f"Only support root model loading to GPU"
@@ -146,7 +150,7 @@ def load_fsdp_model_to_gpu(model: FSDP):
 
 @torch.no_grad()
 def offload_fsdp_optimizer(optimizer):
-    if not optimizer.state:
+    if optimizer is None or not optimizer.state:
         return
     for param_group in optimizer.param_groups:
         for param in param_group['params']:

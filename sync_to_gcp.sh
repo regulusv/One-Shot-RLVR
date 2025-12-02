@@ -4,9 +4,9 @@
 # Add gcloud to PATH if not already there (based on local environment)
 export PATH=/Users/gil/google-cloud-sdk/bin:$PATH
 
-# Configuration
-INSTANCE_NAME="cs229v1-20251201-231519"
-ZONE="us-east1-d"
+# Configuration - L4 GPU Instance
+INSTANCE_NAME="instance-20251202-055916"
+ZONE="northamerica-northeast1-b"
 PROJECT_ID="one-shot-rlvr-cs229"
 
 # Remote directory
@@ -26,9 +26,9 @@ gcloud compute scp --project=$PROJECT_ID --zone=$ZONE --recurse \
     tests \
     scripts \
     requirements.txt \
-    requirements_gcp.txt \
     setup.py \
-    PROJECT_INSTRUCTIONS.md \
+    pyproject.toml \
+    README.md \
     $INSTANCE_NAME:$REMOTE_DIR
 
 echo "✅ Sync complete!"

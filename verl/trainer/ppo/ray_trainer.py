@@ -1011,7 +1011,9 @@ class RayPPOTrainer(object):
         # load checkpoint before doing anything
         self._load_checkpoint()
 
-        self._save_checkpoint()
+        # Skip initial checkpoint save if save_freq <= 0 (to save memory on constrained systems)
+        if self.config.trainer.save_freq > 0:
+            self._save_checkpoint()
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
@@ -1022,10 +1024,11 @@ class RayPPOTrainer(object):
             if self.config.trainer.get('val_only', False):
                 return
 
-        # save initial checkpoint
-        with _timer('save_initial_checkpoint', {}):
-            print(f"Saving initial checkpoint at step {self.global_steps}")
-            self._save_checkpoint()
+        # save initial checkpoint (skip if save_freq <= 0)
+        if self.config.trainer.save_freq > 0:
+            with _timer('save_initial_checkpoint', {}):
+                print(f"Saving initial checkpoint at step {self.global_steps}")
+                self._save_checkpoint()
 
         # we start from step 1
         self.global_steps += 1

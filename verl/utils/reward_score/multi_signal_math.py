@@ -2,9 +2,16 @@ import re
 import os
 from verl.utils.reward_score.math import last_boxed_only_string, remove_boxed, is_equiv
 
-def compute_score(solution_str, ground_truth, method='strict', format_score=0.1, score=1.):
+def compute_score(data_source, solution_str, ground_truth, extra_info=None, use_think=False):
     """
     Computes the multi-signal reward score.
+    
+    Args:
+        data_source: Data source identifier (unused, for API compatibility)
+        solution_str: The model's generated solution
+        ground_truth: The expected answer
+        extra_info: Additional info (unused, for API compatibility)
+        use_think: Whether thinking tags are used (unused, for API compatibility)
     
     Weights:
     Controlled by REWARD_WEIGHTS env var (comma-separated).
