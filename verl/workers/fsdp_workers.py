@@ -250,7 +250,8 @@ class ActorRolloutRefWorker(Worker):
                     actor_module.print_trainable_parameters()
             
             # some parameters may not in torch_dtype. TODO(zhangchi.usc1992) remove this after we switch to fsdp2
-            actor_module.to(torch_dtype)
+            if not load_in_4bit:
+                actor_module.to(torch_dtype)
 
             if enable_gradient_checkpointing:
                 actor_module.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
@@ -260,6 +261,10 @@ class ActorRolloutRefWorker(Worker):
             print_model_size(actor_module)
 
         log_gpu_memory_usage('After init from HF AutoModel', logger=logger)
+
+        # Skip FSDP wrapping for 4-bit models on single GPU
+        if load_in_4bit and torch.distributed.get_world_size() == 1:
+             return actor_module, None, None, actor_model_config
 
         # We wrap FSDP for rollout as well
         mixed_precision_config = fsdp_config.get('mixed_precision', None)
@@ -406,7 +411,10 @@ class ActorRolloutRefWorker(Worker):
                 role='actor')
 
             # get the original unwrapped module
-            self.actor_module = self.actor_module_fsdp._fsdp_wrapped_module
+            if self.config.model.get('load_in_4bit', False) and torch.distributed.get_world_size() == 1:
+                self.actor_module = self.actor_module_fsdp
+            else:
+                self.actor_module = self.actor_module_fsdp._fsdp_wrapped_module
 
             if self._is_offload_optimizer:
                 offload_fsdp_optimizer(optimizer=self.actor_optimizer)
@@ -437,6 +445,8 @@ class ActorRolloutRefWorker(Worker):
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
                 self.config.ref.use_remove_padding = use_remove_padding
+            
+            # If 4-bit and not FSDP wrapped, ref_module_fsdp is the raw model
             self.ref_policy = DataParallelPPOActor(config=self.config.ref, actor_module=self.ref_module_fsdp)
 
         if self._is_actor:

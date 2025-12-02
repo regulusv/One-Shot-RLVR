@@ -49,7 +49,9 @@ class BaseCheckpointManager:
         self.lr_scheduler = lr_scheduler
         self.tokenizer = tokenizer
 
-        assert isinstance(self.model, FSDP)
+        if torch.distributed.is_initialized() and torch.distributed.get_world_size() > 1:
+             assert isinstance(self.model, FSDP)
+        
         self.rank = torch.distributed.get_rank()
         self.world_size = torch.distributed.get_world_size()
 

@@ -9,8 +9,8 @@ export CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.11
 
 # Configuration variables
 PROJECT_ID="one-shot-rlvr-cs229"
-INSTANCE_NAME="one-shot-rlvr-train"
-ZONE="us-west4-a"
+INSTANCE_NAME="cs229v1-20251201-231519"
+ZONE="us-east1-d"
 
 # GPU Configuration - Adjust based on your needs
 # GPU_TYPE options:

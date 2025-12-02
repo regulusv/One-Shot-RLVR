@@ -1,11 +1,14 @@
 import re
+import os
 from verl.utils.reward_score.math import last_boxed_only_string, remove_boxed, is_equiv
 
 def compute_score(solution_str, ground_truth, method='strict', format_score=0.1, score=1.):
     """
     Computes the multi-signal reward score.
     
-    Weights (hardcoded for now as per instructions):
+    Weights:
+    Controlled by REWARD_WEIGHTS env var (comma-separated).
+    Default:
     alpha (verify) = 1.0
     beta (format) = 0.5
     gamma (reflect) = 0.5
@@ -15,6 +18,17 @@ def compute_score(solution_str, ground_truth, method='strict', format_score=0.1,
     alpha = 1.0
     beta = 0.5
     gamma = 0.5
+    
+    reward_weights = os.getenv('REWARD_WEIGHTS')
+    if reward_weights:
+        try:
+            weights = [float(w) for w in reward_weights.split(',')]
+            if len(weights) == 3:
+                alpha, beta, gamma = weights
+            else:
+                print(f"Warning: REWARD_WEIGHTS must contain 3 values, got {len(weights)}. Using defaults.")
+        except ValueError:
+            print(f"Warning: Could not parse REWARD_WEIGHTS '{reward_weights}'. Using defaults.")
     
     # 1. r_verify (Outcome)
     r_verify = 0.0

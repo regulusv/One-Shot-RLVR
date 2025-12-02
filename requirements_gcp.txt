@@ -1,0 +1,24 @@
+# Base dependencies
+accelerate
+codetiming
+datasets
+dill
+flash-attn
+hydra-core
+liger-kernel
+numpy
+pandas
+peft
+pyarrow>=15.0.0
+pybind11
+pylatexenc
+ray
+tensordict<0.6
+transformers
+vllm==0.6.3.post1
+wandb
+
+# Additional GCP/Training dependencies
+bitsandbytes
+scipy
+

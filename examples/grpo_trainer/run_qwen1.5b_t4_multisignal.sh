@@ -1,6 +1,7 @@
 set -x
 
 export VLLM_ATTENTION_BACKEND=XFORMERS
+export RAY_memory_monitor_refresh_ms=0
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -30,7 +31,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console'] \
     trainer.project_name='verl_grpo_example_gsm8k' \
     trainer.experiment_name='qwen1.5b_t4_multisignal' \
     trainer.n_gpus_per_node=1 \
@@ -38,10 +39,11 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=10 \
     trainer.test_freq=10 \
     trainer.total_epochs=15 \
-    actor_rollout_ref.model.load_in_4bit=True \
-    actor_rollout_ref.model.lora_rank=64 \
-    actor_rollout_ref.model.lora_alpha=128 \
-    actor_rollout_ref.model.target_modules=all-linear \
-    reward_model.reward_manager=multi_signal \
+    +actor_rollout_ref.model.load_in_4bit=True \
+    +actor_rollout_ref.model.lora_rank=64 \
+    +actor_rollout_ref.model.lora_alpha=128 \
+    +actor_rollout_ref.model.target_modules=all-linear \
+    ++reward_model.reward_manager=multi_signal \
+    actor_rollout_ref.rollout.dtype=float16 \
     $@
 
