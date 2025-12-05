@@ -137,17 +137,25 @@ class RLHFDataset(Dataset):
 
         chat = row_dict.pop(self.prompt_key)
 
-        # Task 4: Prompt Engineering for Reflection
-        # Check if we need to append the reflection instruction.
-        # This is a heuristic to ensure the model knows about the new requirements.
-        new_instruction = "Solve the math problem. Show your reasoning in <think> tags. Output the final answer in \\boxed{}. Finally, analyze your own solution in <reflection> tags, stating whether you believe it is 'correct' or 'wrong'."
+        # Task 4: Prompt Engineering for Multi-Signal Reflection Format
+        # Append structured output instructions to enforce the required format:
+        # <think>...</think> + \boxed{} + <reflection>...</reflection>
+        MULTI_SIGNAL_INSTRUCTION = (
+            "Format your response as follows:\n"
+            "1. Begin with <think> and show your step-by-step reasoning, then close with </think>.\n"
+            "2. Output your final answer inside \\boxed{}.\n"
+            "3. Add <reflection>...</reflection> tags analyzing your solution. "
+            "State whether you believe your answer is 'correct' or 'wrong' and explain briefly."
+        )
         
         if chat and isinstance(chat, list):
             # Find the last user message and append instruction if not present
             for msg in reversed(chat):
                 if msg.get('role') == 'user':
-                    if "<reflection>" not in msg.get('content', ''):
-                        msg['content'] += "\n\n" + new_instruction
+                    content = msg.get('content', '')
+                    # Only append if not already instructed about reflection format
+                    if "<reflection>" not in content and "\\boxed{}" not in content:
+                        msg['content'] = content + "\n\n" + MULTI_SIGNAL_INSTRUCTION
                     break
 
         prompt_with_chat_template = self.tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)

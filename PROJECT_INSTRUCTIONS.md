@@ -1,56 +1,63 @@
-
+# Role: Senior AI Engineer & RL Researcher
 # Project: Multi-Signal One-Shot RLVR (Qwen2.5-Math-1.5B)
-# Hardware: Single NVIDIA L4 GPU (24GB VRAM, supports BF16)
+# Hardware: Single NVIDIA H100 GPU (80GB VRAM)
 
 ## 🎯 Objective
-We are modifying the `One-Shot-RLVR` repository to implement a **Multi-Signal Reward** system (Outcome + Format + Reflection).
-The goal is to reproduce "One-Shot RLVR" on a single example (`pi1`) but with enhanced reward signals.
+We are reproducing and improving the "One-Shot RLVR" paper using **Full Parameter Fine-Tuning** on a high-end H100 GPU.
+Our goal is to implement a **Multi-Signal Reward** system (Outcome + Format + Reflection) and train `Qwen2.5-Math-1.5B` on the single `pi1` example.
 
-## 🛠️ Hardware Context (CRITICAL)
-* **GPU:** NVIDIA L4 (24GB VRAM).
-* **Precision:** Use `bfloat16` (BF16) strictly. Do NOT use `float16`.
-* **Quantization:** Try to run **without quantization** first (BF16 Full) or with LoRA. If OOM, fallback to 4-bit (NF4).
+## 🛠️ Hardware Context (UNCONSTRAINED)
+* **GPU:** NVIDIA H100 (80GB VRAM).
+* **Compute Capability:** Hopper Arch (FP8/BF16 optimized).
+* **Strategy:** Maximize throughput and performance. **No LoRA. No Quantization.**
 
 ## 📝 Task List
 
 ### Task 1: Verify & Implement Multi-Signal Reward
-**Context:** Basic math reward logic already exists in `verl/utils/reward_score/math.py` or `verl/utils/reward_score/prime_math/`.
+**Context:** Check `verl/utils/reward_score/math.py`.
 **Action:**
-1.  **Analyze** the existing reward files first. Do not blindly create a new file if we can subclass or extend `math.py`.
-2.  **Implement** the `MultiSignalMathReward` class (either in a new file `multi_signal_math.py` or extending the existing one).
-3.  **Logic Requirement:**
-    * Compute: $R = \alpha \cdot R_{verify} + \beta \cdot R_{format} + \gamma \cdot R_{reflect}$
-    * **$R_{verify}$:** Reuse existing `math_score` / `latex2sympy` logic.
-    * **$R_{format}$:** Check for tags: `<think>`, `\boxed{}`, `<reflection>`.
-    * **$R_{reflect}$:** Parse content inside `<reflection>...</reflection>`.
+1.  Implement `MultiSignalMathReward` class in `verl/utils/reward_score/multi_signal_math.py`.
+2.  **Logic Requirement:**
+    * $R = \alpha \cdot R_{verify} + \beta \cdot R_{format} + \gamma \cdot R_{reflect}$
+    * **$R_{verify}$:** Use `latex2sympy` logic (Outcome).
+    * **$R_{format}$:** Valid XML tags (`<think>`, `\boxed{}`, `<reflection>`).
+    * **$R_{reflect}$:**
         * Reward (+1) if `verify=True` AND reflection says "correct".
         * Reward (+1) if `verify=False` AND reflection says "wrong".
         * Else 0.
 
-### Task 2: Configure Model Loading for L4 (BF16)
-**Action:** Modify `verl/utils/model.py` (or relevant actor class).
-* **Force BF16:** Ensure `torch_dtype=torch.bfloat16`.
-* **Attn Implementation:** Ensure `attn_implementation="flash_attention_2"` is enabled (L4 supports it).
+### Task 2: Configure Model Loading (Full Precision)
+**Action:** Modify `verl/utils/model.py` (or `verl/workers/actor/megatron_actor.py` if needed).
+* **Precision:** Force `torch_dtype=torch.bfloat16`.
+* **No Quantization:** Ensure `load_in_4bit` is **False**.
+* **Optimization:** Enable `attn_implementation="flash_attention_2"`.
 
-### Task 3: Create Training Script (500 Steps)
-**Action:** Create `scripts/train/run_l4_multisignal.sh`.
-**Reference:** Base strictly on `scripts/train/training_1.5b_pi1_r128.sh` (Paper implementation).
+### Task 3: Create H100 Training Script (Full Power)
+**Action:** Create `scripts/train/run_h100_multisignal.sh`.
+**Reference:** Base on `scripts/train/training_1.5b_pi1_r128.sh`.
 
-**Key Parameter Changes:**
-1.  **Steps/Epochs:** Set `trainer.total_epochs=500`. (Since dataset size = batch size = 128, 1 epoch = 1 step. We want **500 steps** for a quick 1-hour experiment).
-2.  **Compute:**
+**Key Configuration Changes (For H100):**
+1.  **Compute:**
     * `trainer.n_gpus_per_node=1`
-    * `actor_rollout_ref.rollout.n=8` (Group Size = 8). (L4 24GB can handle larger groups than T4).
-    * `actor_rollout_ref.model.enable_gradient_checkpointing=True`.
-3.  **Data:** Use `data/train/one_shot_rlvr/pi1_r128.parquet`.
-4.  **Reward:** Configure to use the new Multi-Signal reward.
-5.  **LoRA:** Enable LoRA to save VRAM for larger rollouts.
+    * `actor_rollout_ref.rollout.n=32` (Set Group Size to **32**). *Reason: H100 has huge memory; larger group size reduces GRPO variance significantly.*
+    * `actor_rollout_ref.model.enable_gradient_checkpointing=True` (Keep enabled to allow massive rollouts).
+2.  **Training Strategy (Full FT):**
+    * **Disable LoRA:** Remove any PEFT/LoRA flags. We will fine-tune all 1.5B parameters.
+    * `actor_rollout_ref.actor.fsdp_config.param_offload=False` (Keep on GPU).
+    * `actor_rollout_ref.actor.fsdp_config.optimizer_offload=False` (Keep on GPU).
+3.  **Steps/Epochs:**
+    * `trainer.total_epochs=2000`. *Reason: H100 is fast enough to run the full paper schedule.*
+4.  **Batch Size:**
+    * `data.train_batch_size=128`.
+    * `actor_rollout_ref.actor.ppo_mini_batch_size=64` (Try larger mini-batch).
+5.  **Data:** `data/train/one_shot_rlvr/pi1_r128.parquet`.
+6.  **Reward:** Use the new Multi-Signal reward manager.
 
 ### Task 4: Prompt Engineering
-**Action:** Check `verl/utils/dataset/rl_dataset.py` or the script config.
-* Update the system prompt to explicitly ask the model to output `<reflection>` tags after the answer.
+**Action:** Check `verl/utils/dataset/rl_dataset.py`.
+* Ensure the system prompt enforces the `<think> ... \boxed{} ... <reflection>` format.
 
 ## 🚀 Execution Order
-1.  Check existing reward code -> Implement Task 1.
-2.  Create the run script (Task 3) ensuring `total_epochs=500`.
-3.  Modify model loader (Task 2).
+1.  Code the Reward Function (Task 1).
+2.  Create the `run_h100_multisignal.sh` script (Task 3).
+3.  Double-check Model Loading (Task 2) ensures BF16 and no bitsandbytes.
