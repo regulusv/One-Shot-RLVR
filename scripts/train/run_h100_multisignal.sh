@@ -7,9 +7,9 @@
 # Reward: Multi-Signal (Outcome + Format + Reflection)
 # 
 # Usage:
-#   Full training (2000 epochs):  ./run_h100_multisignal.sh
-#   Quick test (10 epochs):       ./run_h100_multisignal.sh --quick
-#   Custom epochs:                EPOCHS=500 ./run_h100_multisignal.sh
+#   Full training (default 220 steps):  ./run_h100_multisignal.sh
+#   Quick test:                         ./run_h100_multisignal.sh --quick
+#   Custom epochs:                      EPOCHS=220 ./run_h100_multisignal.sh
 # =============================================================================
 set -x
 
@@ -22,6 +22,10 @@ for arg in "$@"; do
         --quick) QUICK_MODE=true ;;
     esac
 done
+
+# Unique run naming
+RUN_SUFFIX=$(date +%Y%m%d_%H%M%S)
+EXPERIMENT_BASE="Qwen2.5-Math-1.5B-pi1-multisignal-h100"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # H100-Optimized Environment Variables
@@ -64,7 +68,7 @@ fi
 CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-checkpoints}"
 mkdir -p "$CHECKPOINTS_DIR"
 
-# Mode-dependent settings (extreme acceleration)
+# Mode-dependent settings (extreme acceleration; full run tuned for H100 throughput)
 if [ "$QUICK_MODE" = true ]; then
     echo "🚀 Quick Mode: Running 3 ultra-fast epochs for verification"
     EPOCHS=3
@@ -74,14 +78,17 @@ if [ "$QUICK_MODE" = true ]; then
     MAX_RESPONSE_LEN=512
     EXPERIMENT_SUFFIX="quick"
 else
-    # Accelerated full run
-    EPOCHS="${EPOCHS:-300}"            # lowered from 2000
+    # High-throughput full run on H100 (stable)
+    EPOCHS="${EPOCHS:-220}"            # hard stop target
     SAVE_FREQ="${SAVE_FREQ:-50}"
     TEST_FREQ="${TEST_FREQ:-50}"
-    GROUP_SIZE="${GROUP_SIZE:-2}"      # small rollout to reduce KV cache
-    MAX_RESPONSE_LEN="${MAX_RESPONSE_LEN:-512}"
+    GROUP_SIZE="${GROUP_SIZE:-4}"      # stable rollout
+    MAX_RESPONSE_LEN="${MAX_RESPONSE_LEN:-1536}"
     EXPERIMENT_SUFFIX="fullft"
 fi
+
+EXPERIMENT_NAME="${EXPERIMENT_BASE}-${EXPERIMENT_SUFFIX}-${RUN_SUFFIX}"
+LOG_FILE="verl_h100_multisignal_${EXPERIMENT_SUFFIX}_${RUN_SUFFIX}.log"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Launch Training
@@ -90,7 +97,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=data/train/one_shot_rlvr/pi1_r128.parquet \
     data.val_files=data/test/math500.parquet \
-    data.train_batch_size=32 \
+    data.train_batch_size=64 \
     data.val_batch_size=500 \
     data.max_prompt_length=1024 \
     data.max_response_length="$MAX_RESPONSE_LEN" \
@@ -100,7 +107,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12000 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20000 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -112,10 +119,10 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.6 \
     ++actor_rollout_ref.rollout.val_temperature=0.6 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.30 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.65 \
     actor_rollout_ref.rollout.n="$GROUP_SIZE" \
     ++actor_rollout_ref.rollout.n_val=1 \
-    ++actor_rollout_ref.rollout.max_num_batched_tokens=8192 \
+    ++actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
     ++actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
     ++actor_rollout_ref.model.use_liger=True \
@@ -123,12 +130,15 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     "$LOGGER_CONFIG" \
     trainer.project_name='verl_one_shot_rlvr' \
-    trainer.experiment_name="Qwen2.5-Math-1.5B-pi1-multisignal-h100-${EXPERIMENT_SUFFIX}" \
+    trainer.experiment_name="${EXPERIMENT_NAME}" \
     trainer.checkpoints_dir="$CHECKPOINTS_DIR" \
     ++trainer.val_before_train=False \
+    ++trainer.resume_mode=off \
+    ++trainer.resume_from_path=null \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq="$SAVE_FREQ" \
     trainer.test_freq="$TEST_FREQ" \
     trainer.default_hdfs_dir=null \
-    trainer.total_epochs="$EPOCHS" 2>&1 | tee "verl_h100_multisignal_${EXPERIMENT_SUFFIX}.log"
+    trainer.total_epochs="$EPOCHS" \
+    ++trainer.total_training_steps="$EPOCHS" 2>&1 | tee "$LOG_FILE"

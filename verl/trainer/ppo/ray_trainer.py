@@ -905,9 +905,14 @@ class RayPPOTrainer(object):
             f.write(str(self.global_steps))
 
     def _load_checkpoint(self):
-        if self.config.trainer.resume_mode == 'disable':
-            # On fresh start, set the initial dataloader based on configuration
+        resume_mode = getattr(self.config.trainer, "resume_mode", "auto")
+        if resume_mode in ["disable", "off", None, ""]:
+            # Fresh start: do not attempt to load any checkpoint
+            self.global_steps = 0
+            print('Training from scratch (resume_mode off)')
             return 0
+
+        global_step_folder = None
 
         # load from hdfs
         if self.config.trainer.default_hdfs_dir is not None:
@@ -920,15 +925,15 @@ class RayPPOTrainer(object):
             global_step_folder = find_latest_ckpt_path(checkpoint_folder)  # None if no latest
 
         # find global_step_folder
-        if self.config.trainer.resume_mode == 'auto':
+        if resume_mode == 'auto':
             if global_step_folder is None:
                 print('Training from scratch')
                 return 0
         else:
             if not (self.config.trainer.resume_from_path and global_step_folder is not None):
-                assert isinstance(self.config.trainer.resume_mode, str), "resume ckpt must be str type"
-                assert 'global_step_' in self.config.trainer.resume_mode, "resume ckpt must specify the global_steps"
-                global_step_folder = self.config.trainer.resume_mode
+                assert isinstance(resume_mode, str), "resume ckpt must be str type"
+                assert 'global_step_' in resume_mode, "resume ckpt must specify the global_steps"
+                global_step_folder = resume_mode
                 if not os.path.isabs(global_step_folder):
                     working_dir = os.getcwd()
                     global_step_folder = os.path.join(working_dir, global_step_folder)
