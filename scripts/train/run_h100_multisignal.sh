@@ -64,21 +64,22 @@ fi
 CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-checkpoints}"
 mkdir -p "$CHECKPOINTS_DIR"
 
-# Mode-dependent settings
+# Mode-dependent settings (extreme acceleration)
 if [ "$QUICK_MODE" = true ]; then
-    echo "🚀 Quick Mode: Running 10 epochs for verification"
-    EPOCHS=10
-    SAVE_FREQ=5
-    TEST_FREQ=5
-    GROUP_SIZE=8
-    MAX_RESPONSE_LEN=2048
+    echo "🚀 Quick Mode: Running 3 ultra-fast epochs for verification"
+    EPOCHS=3
+    SAVE_FREQ=-1          # skip ckpt for quick run
+    TEST_FREQ=-1          # skip val for quick run
+    GROUP_SIZE=2          # smallest rollout group for speed
+    MAX_RESPONSE_LEN=512
     EXPERIMENT_SUFFIX="quick"
 else
-    EPOCHS="${EPOCHS:-2000}"
-    SAVE_FREQ="${SAVE_FREQ:-100}"
+    # Accelerated full run
+    EPOCHS="${EPOCHS:-300}"            # lowered from 2000
+    SAVE_FREQ="${SAVE_FREQ:-50}"
     TEST_FREQ="${TEST_FREQ:-50}"
-    GROUP_SIZE="${GROUP_SIZE:-32}"
-    MAX_RESPONSE_LEN="${MAX_RESPONSE_LEN:-3072}"
+    GROUP_SIZE="${GROUP_SIZE:-2}"      # small rollout to reduce KV cache
+    MAX_RESPONSE_LEN="${MAX_RESPONSE_LEN:-512}"
     EXPERIMENT_SUFFIX="fullft"
 fi
 
@@ -89,7 +90,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=data/train/one_shot_rlvr/pi1_r128.parquet \
     data.val_files=data/test/math500.parquet \
-    data.train_batch_size=128 \
+    data.train_batch_size=32 \
     data.val_batch_size=500 \
     data.max_prompt_length=1024 \
     data.max_response_length="$MAX_RESPONSE_LEN" \
@@ -99,7 +100,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=24000 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12000 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -111,10 +112,10 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.6 \
     ++actor_rollout_ref.rollout.val_temperature=0.6 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.30 \
     actor_rollout_ref.rollout.n="$GROUP_SIZE" \
     ++actor_rollout_ref.rollout.n_val=1 \
-    ++actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+    ++actor_rollout_ref.rollout.max_num_batched_tokens=8192 \
     ++actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
     ++actor_rollout_ref.model.use_liger=True \
@@ -124,7 +125,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name='verl_one_shot_rlvr' \
     trainer.experiment_name="Qwen2.5-Math-1.5B-pi1-multisignal-h100-${EXPERIMENT_SUFFIX}" \
     trainer.checkpoints_dir="$CHECKPOINTS_DIR" \
-    ++trainer.val_before_train=True \
+    ++trainer.val_before_train=False \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq="$SAVE_FREQ" \
