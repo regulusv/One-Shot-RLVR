@@ -41,12 +41,20 @@ export NVIDIA_TF32_OVERRIDE=1
 # Multi-Signal Reward Weights: R = α·R_verify + β·R_format + γ·R_reflect
 export REWARD_WEIGHTS="${REWARD_WEIGHTS:-1.0,0.5,0.5}"
 
-# WandB Configuration (set via environment, not hardcoded)
+# WandB Configuration
 export WANDB_PROJECT="${WANDB_PROJECT:-verl_one_shot_rlvr}"
+
+# Load WandB key from secrets file if not set
+if [ -z "$WANDB_API_KEY" ] && [ -f "secrets/wandb_key" ]; then
+    export WANDB_API_KEY=$(cat secrets/wandb_key | tr -d '\n')
+    echo "✅ Loaded WANDB_API_KEY from secrets/wandb_key"
+fi
+
 if [ -z "$WANDB_API_KEY" ]; then
     echo "⚠️  WANDB_API_KEY not set. Logging to console only."
     LOGGER_CONFIG="trainer.logger=['console']"
 else
+    echo "✅ WandB enabled. Project: $WANDB_PROJECT"
     LOGGER_CONFIG="trainer.logger=['console','wandb']"
 fi
 
@@ -97,26 +105,26 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    +actor_rollout_ref.actor.fsdp_config.grad_offload=False \
+    ++actor_rollout_ref.actor.fsdp_config.grad_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.6 \
-    +actor_rollout_ref.rollout.val_temperature=0.6 \
+    ++actor_rollout_ref.rollout.val_temperature=0.6 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.88 \
     actor_rollout_ref.rollout.n="$GROUP_SIZE" \
-    +actor_rollout_ref.rollout.n_val=1 \
-    +actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
-    +actor_rollout_ref.rollout.enable_chunked_prefill=True \
+    ++actor_rollout_ref.rollout.n_val=1 \
+    ++actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+    ++actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
-    +actor_rollout_ref.model.use_liger=True \
+    ++actor_rollout_ref.model.use_liger=True \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
     "$LOGGER_CONFIG" \
     trainer.project_name='verl_one_shot_rlvr' \
     trainer.experiment_name="Qwen2.5-Math-1.5B-pi1-multisignal-h100-${EXPERIMENT_SUFFIX}" \
     trainer.checkpoints_dir="$CHECKPOINTS_DIR" \
-    +trainer.val_before_train=True \
+    ++trainer.val_before_train=True \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq="$SAVE_FREQ" \
